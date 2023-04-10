@@ -1,0 +1,183 @@
+---
+title: "Homework 4: Linear Regression"
+author: "Will Fleischer"
+output: html_document
+---
+
+```{r}
+library(tidyverse)
+library(tidycensus)
+```
+
+```{r}
+airport_pairs = read.csv("airport_pairs.csv")
+```
+
+
+# Question 1:
+The first question the investors want to understand is how popular 
+the existing routes from or to RDU are. Create a table of the existing 
+flights to or from RDU, and the number of passengers passenger traveling 
+to each destination. Make sure to include both flights departing RDU and those 
+arriving RDU. What is the most popular non-stop destination from RDU? 
+
+
+Looking at the flights leaving from RDU, the flight with the most passengers is RDU to ATL, with 540190	passengers.
+```{r}
+# filtering data for flights going in or out of RDU with passengers above 10000
+rdu_table = filter(airport_pairs, origin == "RDU" & passengers > 10000| dest == "RDU" & passengers > 10000)
+
+#seeing which routes are most populated
+head(arrange(rdu_table, desc(passengers)))
+```
+
+# Question 2: Bringing in Census data
+```{r}
+#load acs variables
+acs_vars = load_variables(2020, "acs5")
+
+#getting cbsa data for populations and also population by gender
+origin = get_acs(
+  geography = "cbsa",
+  variables=c(
+    "origin_pop"="B01001_001",
+    "male_origin" = "B01001_002",
+    "female_origin" = "B01001_026"),
+  year = 2020,
+  survey = "acs5",
+  output="wide"
+)
+
+dest = get_acs(
+  geography = "cbsa",
+  variables=c(
+    "dest_pop"="B01001_001",
+    "male_dest" = "B01001_002",
+    "female_dest" = "B01001_026"),
+  year = 2020,
+  survey = "acs5",
+  output="wide"
+)
+
+```
+
+```{r}
+# Modify table to prepare for joining, making sure col names align and data types match
+# pop for origin is cbsa
+origin2 = rename(origin, "origin_cbsa" = GEOID)
+origin2$origin_cbsa = as.integer(origin2$origin_cbsa)
+# pop for dest is cbsa2
+dest2 = rename(dest, "dest_cbsa" = GEOID)
+dest2$dest_cbsa = as.integer(dest2$dest_cbsa)
+
+```
+
+```{r}
+#joining tables by origin and dest
+total_join = merge(airport_pairs, origin2, by="origin_cbsa")
+total_join2 = merge(total_join, dest2, by="dest_cbsa")
+
+```
+
+```{r}
+# some areas are served by multiple airports, group by and summarize to put these together
+cbsa_to_cbsa = group_by(
+  total_join2, origin_cbsa, origin_cbsa_name, dest_cbsa, 
+  dest_cbsa_name,origin_popE,dest_popE, male_destE, male_originE,
+  female_destE, female_originE) %>% 
+  summarise(total_pass = sum(passengers), mean_miles=mean(distancemiles))
+```
+
+
+```{r}
+# plotting populations and miles against passengers
+ggplot(cbsa_to_cbsa, aes(x=origin_popE, y=total_pass)) +
+  geom_point(size=1) 
+
+ggplot(cbsa_to_cbsa, aes(x=dest_popE, y=total_pass)) +
+  geom_point(size=1)
+
+ggplot(cbsa_to_cbsa, aes(x=mean_miles, y=total_pass)) +
+  geom_point(size=1)
+```
+There seems to be a slight increase in total passengers to flights from and to places with larger populations. Both the origin and dest populations against passengers look roughly the same. There tends to be more passengers for shorter flights, mostly less than 2000 miles. Anything greater than 3000 miles does not tend to bring in a lot of passengers. 
+```{r}
+#extra credit
+ggplot(cbsa_to_cbsa, aes(x=male_originE, y=total_pass)) +
+  geom_point(size=1)
+
+ggplot(cbsa_to_cbsa, aes(x=female_originE, y=total_pass)) +
+  geom_point(size=1)
+
+```
+Looking at male and female populations at the origin does not result in a great amount of difference, the plots are very similar to those of the overall population.
+
+# Question 3: Passenger volume regression
+
+```{r}
+#creating linear regression model and summarizing to see results
+passenger_regression = lm(total_pass~origin_popE + dest_popE + mean_miles + male_originE + male_destE, data = cbsa_to_cbsa)
+summary(passenger_regression)
+```
+The origin_pop and dest_pop coefficients are very similar and have a slight negative impact on the number of total passengers. The mean_miles coefficient is -28, so the longer a flight is, the less populated a flight will be. The male_origin and male_dest coefficients are also very similar, and have a slight positive impact on the number of total passengers. These variables all have a p-value <.05, so these variables are statistically significant in predicting total passengers on a flight. The r^2 value is .221, which means that around 22.1% of the variance of total passengers is explained by the variables.
+
+# Question 4: Passenger volume prediction
+
+```{r}
+#  -30551.26833 +  -0.34901*(origin_pop) + -0.34261*(dest_pop) + -28.09233*(mean_miles) +  0.76537*(male_origin) + 0.75226*(male_dest)
+
+#RDU to PDX
+
+rdu_pdx = -30551.26833 +  -0.34901*(1362997) + -0.34261*(2472774) + -28.09233*(2363) +  0.76537*(664626) + 0.75226*(1224427)
+
+#PDX to RDU
+pdx_rdu = -30551.26833 +  -0.34901*(2472774) + -0.34261*(1362997) + -28.09233*(2363) +  0.76537*(1224427) + 0.75226*(664626)
+
+```
+
+```{r}
+#RDU to ELP
+
+rdu_elp = -30551.26833 +  -0.34901*(1362997) + -0.34261*(841602) + -28.09233*(1606) +  0.76537*(664626) + 0.75226*(415461)
+
+#ELP to RDU
+
+elp_rdu = -30551.26833 +  -0.34901*(841602) + -0.34261*(1362997) + -28.09233*(1606) +  0.76537*(415461) + 0.75226*(664626)
+
+```
+
+```{r}
+#RDU to TLH
+
+rdu_tlh = -30551.26833 +  -0.34901*(1362997) + -0.34261*(384783) + -28.09233*(496) +  0.76537*(664626) + 0.75226*(185640)
+
+#TLH to RDU
+
+tlh_rdu = -30551.26833 +  -0.34901*(384783) + -0.34261*(1362997) + -28.09233*(496) +  0.76537*(185640) + 0.75226*(664626)
+```
+
+```{r}
+# RDU to SAN
+rdu_san = -30551.26833 +  -0.34901*(1362997) + -0.34261*(3323970) + -28.09233*(2193) +  0.76537*(664626) + 0.75226*(1674512)
+
+
+san_rdu = -30551.26833 +  -0.34901*(3323970) + -0.34261*(1362997) + -28.09233*(2193) +  0.76537*(1674512) + 0.75226*(664626)
+
+```
+
+```{r}
+# creating table with forecast demands
+
+demands = tribble(
+  ~rdu_to_pdx,  ~rdu_to_elp, ~rdu_to_tlh, ~rdu_to_san,
+  rdu_pdx, rdu_elp,  rdu_tlh, rdu_san,
+  pdx_rdu, elp_rdu,  tlh_rdu, san_rdu
+)
+
+row.names(demands)[1] = "rdu to destination"
+row.names(demands)[2] = "destination to rdu"
+
+demands
+```
+It seems like population of the destination city is the biggest factor in predicting the total number of passengers, along with mean miles. San Diego has the highest demand but that is most likely because their population is so big compared to the other cities. Tallahassee has a negative demand, likely because of their low population, but El Paso has an lower demand even though they have a higher population. This difference is due to how close Tallahassee is to Raleigh, and shorter flights have a higher demand. These results are expected, but I do not think it is the most accurate at predicting demand for flights.
+
